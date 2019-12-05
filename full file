@@ -1,0 +1,198 @@
+library(readxl)
+library(XML)
+library(zoo)
+library(car)
+library(ggfortify) 
+library(rvest) #to scrape the web
+library(dplyr) #for filtering
+library(WDI) #api to gather data -  https://cran.r-project.org/web/packages/WDI/WDI.pdf  
+# WDI  ------------------------------------------------------------
+WDIsearch(string = "species", field = "name") #search for data with "species" in the name
+#came back with 7 results, we will use data for mammals, plants, fish, and birds
+WDIsearch(string = "land", field = "name") #search for land area
+#Use the WDI function to import data into data frame
+threatened.mammals <- WDI(country = "all", indicator = "EN.MAM.THRD.NO", start = NULL,
+                          end = NULL, extra = FALSE, cache = NULL)
+threatened.plants <- WDI(country = "all", indicator = "EN.HPT.THRD.NO", start = NULL,
+                          end = NULL, extra = FALSE, cache = NULL)
+threatened.fish <- WDI(country = "all", indicator = "EN.FSH.THRD.NO", start = NULL,
+                         end = NULL, extra = FALSE, cache = NULL)
+threatened.birds <- WDI(country = "all", indicator = "EN.BIR.THRD.NO", start = NULL,
+                         end = NULL, extra = FALSE, cache = NULL)
+land <- WDI(indicator = "AG.LND.TOTL.K2")
+#Create a merged data.frame with all the information 
+#First merge to tables together by the similiar columns then merge the two tables into one large data frame
+mammal.plants <- merge(threatened.mammals,threatened.plants, by = c("country","year", "iso2c"))
+fish.birds <- merge(threatened.fish,threatened.birds, by = c("country","year", "iso2c"))
+threatened.species <- merge(mammal.plants,fish.birds, by = c("country","year", "iso2c"))
+threatened.species <- merge(threatened.species,land, by = c("country","year", "iso2c"))
+#It seems that only there's only data for 2018 - create a new data frame with only 2018 data
+threatened.species.2018 <- threatened.species %>%
+  filter(year == '2018')
+#Some of the rows aren't actually countries, to ensure our data only shows actual countries and not 
+#low income, we will scrape a list of countries by iso2c(country codes) to filter out the data frame
+
+# Country Coordinates -----------------------------------------------------
+
+#also want to include coordinates of the country
+countrycodes_html <- read_html("https://developers.google.com/public-data/docs/canonical/countries_csv")
+countrycodes_table <- html_nodes(countrycodes_html, xpath = "//table") #find the tables in the html
+countrycodes_table <- html_table(countrycodes_table) #list of data frames
+countrycodes_table <- countrycodes_table[[1]] #grab the first element - now it's the only data frame
+
+#Merge the threatened.species.2018 table with the countrycodes_table to ensure our data only has 
+#countries and not other information such as low income
+colnames(countrycodes_table)[1] <- "iso2c" #change column name
+threatened.species.2018.country <- merge(threatened.species.2018,countrycodes_table, by = "iso2c")
+colnames(threatened.species.2018.country)[4:8] <- c("Mammals","Plants","Fish","Birds","Land.sq.km") #change names
+
+# Population & Pollution --------------------------------------------------
+#Scrape for population 
+country.population <- read_html(
+  "https://www.worldometers.info/world-population/population-by-country/")
+
+#select table nodes
+Country.population.rank <- html_nodes(country.population, xpath = "//table")
+#convert to data frame
+scraped_Country.population.rank <- as.data.frame(html_table(Country.population.rank,fill = TRUE))
+#Split population into high and low dataframes
+countries_high_population <- scraped_Country.population.rank[1:50,]
+countries_high_population <- countries_high_population$Country..or.dependency.
+countries_low_population <- scraped_Country.population.rank[184:233,]
+countries_low_population <- countries_low_population$Country..or.dependency.
+
+#add in the threatened species in the new data frames
+countries_HP_threatenedSpecies <- threatened.species.2018.country %>%
+  filter(country %in% countries_high_population)
+
+countries_LP_threatenedSpecies <- threatened.species.2018.country %>%
+  filter(country %in% countries_low_population)
+
+#Sum up all the threatened species to get a total amount of threatened species
+countries_HP_threatenedSpecies_total <- countries_HP_threatenedSpecies$Mammals+countries_HP_threatenedSpecies$Birds+countries_HP_threatenedSpecies$Fish+countries_HP_threatenedSpecies$Plants
+
+countries_LP_threatenedSpecies_total <- countries_LP_threatenedSpecies$Mammals+countries_LP_threatenedSpecies$Birds+countries_LP_threatenedSpecies$Fish+countries_LP_threatenedSpecies$Plants
+#Scrape for pollution levels
+country.pollution <- read_html(
+  "https://www.ucsusa.org/resources/each-countrys-share-co2-emissions")
+
+#scrape table nodes
+Country.pollution.rank <- html_nodes(country.pollution, xpath = "//table")
+#convert to data frame
+scraped_Country.pollution.rank <- as.data.frame(html_table(Country.pollution.rank,fill = TRUE))
+
+#Vector of all the countries that are most polluted
+most_polluting_countries <- scraped_Country.pollution.rank$Country
+#add in threatened species info in the most polluted countries
+polluting_countries_threatened_species <- threatened.species.2018.country %>%
+  filter(country %in% most_polluting_countries)
+polluting_countries_threatened_species$totalthreatened <- polluting_countries_threatened_species$Mammals+polluting_countries_threatened_species$Birds+polluting_countries_threatened_species$Fish+polluting_countries_threatened_species$Plants
+
+#sum all the threatened species together
+threatened.species.2018.country$totalthreatened <- threatened.species.2018.country$Mammals+threatened.species.2018.country$Birds+threatened.species.2018.country$Fish+threatened.species.2018.country$Plants  
+
+# Regression Analysis: Food Chain -----------------------------------------------------------
+
+#model predicting mammals based on fish and plants         
+mammalpred <- lm(Mammals ~ Plants+Fish,data = threatened.species.2018.country)
+summary(mammalpred)
+#model predicting birds based on fish and plants 
+Birdpred <- lm(Birds ~ Plants+Fish,data = threatened.species.2018.country)
+summary(Birdpred)
+#model predicting mammals based on fish,birds and plants 
+mammalspred <- lm(Mammals ~ Plants+Fish+Birds,data = threatened.species.2018.country)
+summary(mammalspred)
+#Predictors to keep
+vif(mammalspred)
+
+#model selection
+threatened.species.2018.country. <- threatened.species.2018.country[ ,4:7]
+
+
+null.model = lm(Mammals ~ 1, data = threatened.species.2018.country.)
+full.model = lm(Mammals ~ ., data = threatened.species.2018.country.)
+
+step.forward <- step(null.model,
+                     scope = list(lower = null.model, upper = full.model),
+                     direction = "forward")
+summary(step.forward)
+#Normal QQ plot - errors are normally distributed
+autoplot(mammalspred, which = 2, ncol = 1)
+#Outlier analysis
+cooks.D <- as.vector(cooks.distance(mammalspred))
+p <- 3 # Number of predictors in our model
+n <- nrow(threatened.species.2018.country.) # n is the number of observations
+
+influential.outliers <- which(cooks.D > qf(0.05, p + 1, n - p -1))
+print(influential.outliers)
+# errors have mean zero
+qplot(mammalspred$residuals)
+
+#checking for correlation over time
+qplot(index(mammalspred$residuals), mammalspred$residuals)+
+  xlab('Index') + ylab('Residuals')
+
+
+# Regression Analysis: Land -----------------------------------------------
+#Does the amount of land a country has predict the number of threatened species?
+land.threat <- lm(totalthreatened ~ Land.sq.km,data = threatened.species.2018.country)
+summary(land.threat) #Land does predict number of threatened species
+#Outliers
+cooks.D <- as.vector(cooks.distance(land.threat))
+p <- 1 # Number of predictors in our model
+  n <- nrow(threatened.species.2018.country.) # n is the number of observations
+
+influential.outliers <- which(cooks.D > qf(0.05, p + 1, n - p -1))
+print(influential.outliers)
+#Plot outliers
+autoplot(land.threat, which = 2, ncol = 1)
+
+#Erros have mean 0
+qplot(land.threat$residuals)
+#Correlation over time
+qplot(index(land.threat$residuals), land.threat$residuals)+
+  xlab('Index') + ylab('Residuals')
+# Hypothesis Testing ------------------------------------------------------
+#check for relationships
+chisq.test(threatened.species.2018.country.$Mammals,threatened.species.2018.country.$Birds)
+#relationship exists
+chisq.test(threatened.species.2018.country.$Mammals,threatened.species.2018.country.$Fish)
+#relationship exists
+chisq.test(threatened.species.2018.country.$Mammals,threatened.species.2018.country.$Plants)
+#relationship exists
+chisq.test(threatened.species.2018.country.$Plants,threatened.species.2018.country.$Fish)
+#relationship exists
+chisq.test(threatened.species.2018.country.$Birds,threatened.species.2018.country.$Fish)
+#relationship exists
+chisq.test(threatened.species.2018.country.$Birds,threatened.species.2018.country.$Plants)
+#relationship exists
+
+which.max(threatened.species.2018.country.$Mammals) #Indonesia the highest extinct number of mammals.
+which.max(threatened.species.2018.country.$Birds) #Brazil the highest extinct number of birds.
+which.max(threatened.species.2018.country.$Fish) #United States the highest extinct number of fish.
+which.max(threatened.species.2018.country.$Plants) #Ecuador the highest extinct number of plants.
+
+#Is the mean number of threatened animals higher for countries with higher levels of pollution?
+t.test(polluting_countries_threatened_species$totalthreatened,threatened.species.2018.country$totalthreatened,alternative = 'greater')
+#conclusion 
+#countries with higher pollution do have more threatened species
+
+
+t.test(countries_HP_threatenedSpecies_total,threatened.species.2018.country$totalthreatened, alternative = 'greater')
+#conclusion
+#countries with a high population have a higher average number of threatened species
+
+
+t.test(countries_LP_threatenedSpecies_total,threatened.species.2018.country$totalthreatened,alternative = 'less')
+#conclusion
+#countries with a low population have a lower average number of threatened species
+
+
+
+
+
+
+
+
+
+

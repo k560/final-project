@@ -93,12 +93,7 @@ threatened.species.2018.country$totalthreatened <- threatened.species.2018.count
 
 # Regression Analysis: Food Chain -----------------------------------------------------------
 
-#model predicting mammals based on fish and plants         
-mammalpred <- lm(Mammals ~ Plants+Fish,data = threatened.species.2018.country)
-summary(mammalpred)
-#model predicting birds based on fish and plants 
-Birdpred <- lm(Birds ~ Plants+Fish,data = threatened.species.2018.country)
-summary(Birdpred)
+
 #model predicting mammals based on fish,birds and plants 
 mammalspred <- lm(Mammals ~ Plants+Fish+Birds,data = threatened.species.2018.country)
 summary(mammalspred)
